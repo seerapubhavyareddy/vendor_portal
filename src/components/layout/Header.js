@@ -151,12 +151,21 @@ const Header = () => {
           </div>
 
           <nav className="nav-links">
+            {/* Home link - always visible, goes to VendorHub or Dashboard */}
             <Link to="/" className={isActiveLink('/') ? 'active' : ''}>
-              Dashboard
+              🏠 Home
             </Link>
-            <Link to="/products" className={isActiveLink('/products') ? 'active' : ''}>
-              Our Products
-            </Link>
+
+            {process.env.REACT_APP_ENABLE_DASHBOARD !== 'false' && (
+              <Link to="/" className={isActiveLink('/') ? 'active' : ''}>
+                Dashboard
+              </Link>
+            )}
+            {process.env.REACT_APP_ENABLE_PRODUCTS !== 'false' && (
+              <Link to="/products" className={isActiveLink('/products') ? 'active' : ''}>
+                Our Products
+              </Link>
+            )}
 
             <Link to="/clinical-trial" className={isActiveLink('/clinical-trial') ? 'active' : ''}>
               Clinical Trial
