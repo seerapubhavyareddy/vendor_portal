@@ -10,10 +10,14 @@ Integrates all API modules including:
 - Dashboard Metrics (dbRetrievalWithNewMetrics.py)
 """
 
-from fastapi import FastAPI, Depends
+from fastapi import FastAPI, Depends, status
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
+from fastapi.exceptions import HTTPException
+from fastapi.security import OAuth2PasswordRequestForm
 from sqlalchemy.orm import Session
 import logging
+from datetime import timedelta
 
 # Import configuration
 from config import (
@@ -22,19 +26,27 @@ from config import (
     APP_DESCRIPTION,
     CORS_ORIGINS,
     PORT,
-    HOST
+    HOST,
+    ACCESS_TOKEN_EXPIRE_MINUTES
 )
 
 # Import database
 from database import get_db
 
 # Import existing modules
-from auth import router as auth_router
+# from auth import router as auth_router  # NOTE: auth.py doesn't export router
 from employee_management import router as employee_router
 from patient_management import router as patient_router
 
 # Import new vendor clinical trial module
 from vendor_clinical_api import router as clinical_router
+
+# Import auth functions
+from auth import (
+    Token,
+    authenticate_user,
+    create_access_token
+)
 
 # Setup logging
 logging.basicConfig(
@@ -66,7 +78,7 @@ app.add_middleware(
 # ==================== Include Routers ====================
 
 # Authentication endpoints (login, register, etc.)
-app.include_router(auth_router)
+# app.include_router(auth_router)  # NOTE: auth_router not available
 
 # Employee management endpoints
 app.include_router(employee_router)
@@ -76,6 +88,39 @@ app.include_router(patient_router)
 
 # Vendor clinical trial endpoints (NEW)
 app.include_router(clinical_router)
+
+# ==================== Authentication Endpoints ====================
+
+@app.post("/token", response_model=Token)
+async def login_for_access_token(form_data: OAuth2PasswordRequestForm = Depends(), db: Session = Depends(get_db)):
+    """
+    Login endpoint for all users (vendor, patient, employee, admin).
+    
+    Accepts username and password via OAuth2 form data.
+    Returns JWT token with user role and user_id.
+    Works for ALL roles including 'admin'.
+    
+    Args:
+        form_data: OAuth2PasswordRequestForm with username and password
+        db: Database session
+        
+    Returns:
+        Token with access_token and token_type
+    """
+    user = authenticate_user(db, form_data.username, form_data.password)
+    if not user:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Incorrect username or password",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+    access_token_expires = timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
+    access_token = create_access_token(
+        data={"sub": user.username, "role": user.role, "user_id": user.user_id},
+        expires_delta=access_token_expires
+    )
+    logger.info(f"✅ User '{user.username}' (role: {user.role}) logged in successfully")
+    return {"access_token": access_token, "token_type": "bearer"}
 
 # ==================== Root Health Check ====================
 
@@ -159,21 +204,27 @@ async def shutdown_event():
 @app.exception_handler(404)
 async def not_found_handler(request, exc):
     """Custom 404 handler"""
-    return {
-        "error": "Not Found",
-        "message": f"The endpoint {request.url.path} does not exist",
-        "documentation": "/docs"
-    }
+    return JSONResponse(
+        status_code=404,
+        content={
+            "error": "Not Found",
+            "message": f"The endpoint {request.url.path} does not exist",
+            "documentation": "/docs"
+        }
+    )
 
 
 @app.exception_handler(500)
 async def internal_error_handler(request, exc):
     """Custom 500 handler"""
     logger.error(f"Internal server error: {str(exc)}")
-    return {
-        "error": "Internal Server Error",
-        "message": "An unexpected error occurred. Please try again later."
-    }
+    return JSONResponse(
+        status_code=500,
+        content={
+            "error": "Internal Server Error",
+            "message": "An unexpected error occurred. Please try again later."
+        }
+    )
 
 
 # ==================== Run Application ====================

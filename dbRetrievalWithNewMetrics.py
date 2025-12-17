@@ -1,3 +1,5 @@
+from dotenv import load_dotenv
+load_dotenv()
 # dBretreivalWithNewMetrics.py
 from database import get_db, engine, SessionLocal, Base, metadata
 from fastapi import FastAPI, Depends, HTTPException, Request, status
@@ -25,11 +27,16 @@ from config import CORS_ORIGINS as cors_origins
 print(f"🔧 Initial CORS Origins from env: {cors_origins}")
 
 
-# Add default origins if empty
+
+# Add default origins if empty, and always include all local dev ports for React/Vite
 if not cors_origins:
     cors_origins = [
         "http://localhost:8000",
         "http://localhost:3000",
+        "http://localhost:5173",
+        "http://127.0.0.1:8000",
+        "http://127.0.0.1:3000",
+        "http://127.0.0.1:5173",
         "https://3b6akxpfpr.us-east-2.awsapprunner.com"
     ]
 
@@ -57,13 +64,20 @@ from auth import (
     SECRET_KEY
 )
 
+
 app = FastAPI()
+
+# Debug endpoint to print the actual JWT secret key being used
+@app.get("/debug-secret")
+def debug_secret():
+    from config import JWT_SECRET_KEY
+    return {"JWT_SECRET_KEY": JWT_SECRET_KEY}
 
 # Enable CORS to allow JavaScript from your frontend to access the API
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=cors_origins,  # Read from environment variable
+    allow_origins=["*"],  # Allow all origins for testing only
     allow_credentials=True,
     allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
     allow_headers=["*"],
@@ -82,23 +96,31 @@ app.include_router(clinical_router)
 
 # Complete the OAuth setup with our get_db function
 def get_current_user_with_db(token: str = Depends(oauth2_scheme), db: Session = Depends(get_db)):
+    import logging
+    logger = logging.getLogger("auth-debug")
     credentials_exception = HTTPException(
         status_code=status.HTTP_401_UNAUTHORIZED,
         detail="Could not validate credentials",
         headers={"WWW-Authenticate": "Bearer"},
     )
+    logger.info(f"🔑 Token received: {token}")
     try:
         payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
+        logger.info(f"✅ JWT decoded payload: {payload}")
         username: str = payload.get("sub")
         if username is None:
+            logger.warning("❌ JWT payload missing 'sub' (username)")
             raise credentials_exception
         token_data = TokenData(username=username)
-    except JWTError:
+    except JWTError as e:
+        logger.error(f"❌ JWTError: {e}")
         raise credentials_exception
     
     user = get_user(db, username=username)
     if user is None:
+        logger.warning(f"❌ No user found in DB for username: {username}")
         raise credentials_exception
+    logger.info(f"✅ User found in DB: {user.username}, role: {user.role}, disabled: {getattr(user, 'disabled', None)}")
     return user
 
 def get_current_active_user(current_user: User = Depends(get_current_user_with_db)):
@@ -962,6 +984,61 @@ async def verify_identity(data: IdentityVerification, db: Session = Depends(get_
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Failed to verify identity"
+        )
+    
+@app.get("/api/admin/vendors")
+async def get_all_vendors(
+    current_user: User = Depends(get_current_active_user),
+    db: Session = Depends(get_db)
+):
+    """Fetch all active vendors for admin dropdown selection."""
+    try:
+        # Verify user is a vendor/admin
+        if current_user.role != 'vendor':
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Only vendors/admins can access vendor list"
+            )
+        
+        query = text("""
+            SELECT 
+                v.vendor_id,
+                v.company_name,
+                v.contact_info,
+                v.status,
+                u.email,
+                u.first_name,
+                u.last_name
+            FROM public.vendor v
+            JOIN public.user_account u ON v.user_id = u.user_id
+            WHERE v.status = 'active'
+            ORDER BY v.vendor_id
+        """)
+        
+        result = db.execute(query).fetchall()
+        
+        vendors = []
+        for row in result:
+            vendors.append({
+                "vendor_id": row[0],
+                "company_name": row[1],
+                "contact_info": row[2],
+                "status": row[3],
+                "email": row[4],
+                "first_name": row[5],
+                "last_name": row[6],
+                "display_name": f"{row[1]} ({row[0]})"  # e.g., "Biohm Labs Vendor (V006)"
+            })
+        
+        return {"vendors": vendors}
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"❌ Error fetching vendors: {str(e)}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to fetch vendors: {str(e)}"
         )
 
     # Endpoint 2: Reset password

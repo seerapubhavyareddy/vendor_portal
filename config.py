@@ -28,3 +28,10 @@ HOST = os.getenv("HOST", "0.0.0.0")
 APP_NAME = "MannBiome API"
 APP_VERSION = "1.0.0"
 APP_DESCRIPTION = "API for the MannBiome platform with OAuth authentication"
+
+# AWS S3 settings for document uploads
+AWS_ACCESS_KEY_ID = os.getenv("AWS_ACCESS_KEY_ID", "")
+AWS_SECRET_ACCESS_KEY = os.getenv("AWS_SECRET_ACCESS_KEY", "")
+AWS_REGION = os.getenv("AWS_REGION", "us-east-2")
+S3_BUCKET_NAME = os.getenv("S3_BUCKET_NAME", "clinical-trial-documents-mannbiome")
+S3_PRESIGNED_URL_EXPIRATION = int(os.getenv("S3_PRESIGNED_URL_EXPIRATION", "604800"))  # 7 days in seconds
